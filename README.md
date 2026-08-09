@@ -1,11 +1,41 @@
 
 # Dpmaster, an open master server
 
-This fork adds atomic persistence for validated servers, heartbeat rate limiting,
-hardened systemd units, a UDP health probe, and Prometheus metrics on HTTP port 80.
+This maintained fork adds atomic persistence for validated servers, heartbeat
+rate limiting, hardened systemd units, a UDP health probe, and Prometheus
+metrics on HTTP port 80.
 
-Build with `make -C src release`. Production deployment assets are available in
-`contrib/systemd`; the metrics endpoint exposes `/healthz` and `/metrics`.
+## Quick start
+
+```sh
+make -C src release
+./src/dpmaster --flood-protection --state-file ./servers.state
+```
+
+The state file is optional. When configured, validated and unexpired servers
+survive a process restart. Writes use a temporary file followed by an atomic
+rename, so an interrupted write cannot replace the last good snapshot.
+
+Run the persistence integration test with:
+
+```sh
+cd testsuite
+./test-persistence.py
+```
+
+## Production deployment
+
+Reference systemd units and installation instructions are in
+[`contrib/systemd`](contrib/systemd/README.md). That deployment enables flood
+protection, persistence, warning-only logs, startup readiness checking, a
+one-minute health timer, and HTTP endpoints:
+
+- `GET /healthz` — probes the UDP master and returns HTTP 200 or 503.
+- `GET /metrics` — Prometheus text metrics for availability, server counts,
+  address families, occupancy, state age, and exporter uptime.
+
+The Docker image builds the source from this repository and stores persistent
+state in the `/var/lib/dpmaster` volume.
 
 ## General information
 

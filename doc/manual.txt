@@ -15,6 +15,8 @@
 7) FLOOD PROTECTION
 8) ADDRESS MAPPING
 9) LISTENING INTERFACES
+10) PERSISTENT SERVER STATE
+11) MONITORING AND SYSTEMD
 
 
 1) ABOUT THIS FILE:
@@ -284,6 +286,12 @@ the client hash size with "--max-clients" and "--cl-hash-size". But since client
 records are reused extremely rapidly in this mechanism, chances are the default
 values will be way bigger than your actual needs anyway.
 
+Server heartbeats have a separate, always-on safeguard. A single server
+endpoint (IP address and UDP port) may send up to 10 heartbeats in a 10-second
+window. Additional heartbeats in that window are ignored and logged as a
+warning. The endpoint includes the port, so several legitimate game servers
+behind one public address do not consume the same allowance.
+
 
 8) ADDRESS MAPPING:
 
@@ -382,6 +390,42 @@ IPv6 address, I recommend that you read the paragraph called "Link-local
 addresses and zone indices" on this Wikipedia page:
 
         http://en.wikipedia.org/wiki/IPv6_address
+
+
+10) PERSISTENT SERVER STATE:
+
+The optional "--state-file <path>" argument preserves validated servers across
+process restarts. Only servers that completed the heartbeat/getinfo/infoResponse
+challenge are written. The snapshot stores their address, port, expiration,
+protocol, game name, game type and occupancy state.
+
+Snapshots are committed atomically by writing "<path>.tmp", flushing it, and
+renaming it over the configured file. At startup, malformed records, expired
+records, unsupported address families and games rejected by the active game
+policy are ignored. Restored records keep their original expiration time; this
+feature does not extend the normal 15-minute validity period.
+
+The process user needs write access to the containing directory. A typical
+Linux configuration is:
+
+        dpmaster --state-file /var/lib/dpmaster/servers.state
+
+Do not edit the state file while dpmaster is running.
+
+
+11) MONITORING AND SYSTEMD:
+
+The "contrib/systemd" directory contains a hardened production configuration.
+The main service enables flood protection, persistence and verbosity level 2.
+Its ExecStartPost probe sends a real UDP getservers request, so systemd does not
+finish the start operation until dpmaster answers correctly.
+
+The optional exporter listens on TCP port 80. "GET /healthz" probes dpmaster
+and returns 200 when healthy or 503 when unavailable. "GET /metrics" returns
+Prometheus text metrics. A separate timer runs the UDP probe once per minute;
+probe failures are visible through "systemctl --failed" and the journal.
+
+See contrib/systemd/README.md for installation and security details.
 
 
 --

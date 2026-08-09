@@ -7,6 +7,14 @@
 
 
 ### Version 2.3-dev:
+  - Added `--state-file` for atomic persistence of validated, unexpired servers
+  - Restored game properties and server filtering state after restarts
+  - Added per-endpoint heartbeat rate limiting (10 heartbeats per 10 seconds)
+  - Corrected the `recvfrom` result type and hardened bounded string copies
+  - Added an automated persistence/restart integration test
+  - Added hardened systemd deployment, UDP readiness checks and a health timer
+  - Added HTTP health and Prometheus metrics endpoints on port 80
+  - Updated the Docker image to build this repository instead of an external one
   - The date in the log header was incorrect when it was enabled from the start
   - Several little fixes and enhancements to the test suite, by Simon McVittie
 

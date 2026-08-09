@@ -34,6 +34,13 @@ Here are the commands you will have to run, depending on your system.
 
             make clean
 
+        - For a local AddressSanitizer and UndefinedBehaviorSanitizer build:
+
+            make clean
+            make EXE=dpmaster \
+                CFLAGS="-O1 -g -Wall -Wextra -fsanitize=address,undefined" \
+                LDFLAGS="-fsanitize=address,undefined" dpmaster
+
 
     2) Building on Windows using MinGW:
 
@@ -391,6 +398,16 @@ server will be able to refresh this timeout value. Its IP address will be
 transmitted to the appropriate clients, until it timeouts. Then, dpmaster
 forgets it.
 
+If "--state-file" is configured, each accepted infoResponse also triggers an
+atomic snapshot of all validated, unexpired servers. Loading a snapshot does
+not bypass authentication: it only restores records that were authenticated by
+the previous process, and it preserves their absolute timeout. New or refreshed
+servers must still complete the normal challenge exchange.
+
+Heartbeats are limited per exact server endpoint to 10 messages per 10 seconds.
+This bounds challenge traffic and repeated registration work without grouping
+different UDP ports hosted behind the same public IP address.
+
 You may have noticed that this behaviour doesn't take into account the fact
 that some servers send 2 "heartbeat" messages when closing. I deliberately
 choose to keep the behaviour as simple and predictable as possible, hopefully
@@ -417,6 +434,11 @@ that this suite isn't yet documented, you should be able to write your own tests
 easily if you need to.
 
 The test suite requires the Socket6 perl module to run.
+
+Modern Perl versions no longer include the current directory in their module
+path; run_all_tests.sh sets PERL5LIB accordingly and returns a non-zero status
+if any test fails. The Python test "test-persistence.py" additionally performs
+a full authenticated registration, process restart and immediate list query.
 
 
 --
