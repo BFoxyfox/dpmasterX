@@ -28,12 +28,50 @@ STARTED = time.time()
 # dpmaster accepts arbitrary game identifiers. This catalog covers identifiers
 # built into dpmaster plus well-known games in the compatible engine ecosystem.
 GAME_CATALOG = {
+    # Built into dpmaster.
     "Quake3Arena": "Quake III Arena",
     "wolfmp": "Return to Castle Wolfenstein",
     "et": "Wolfenstein: Enemy Territory",
+    # DarkPlaces network filter names from com_game.c.
+    "DarkPlaces-Quake": "Quake",
+    "Darkplaces-Hipnotic": "Quake: Scourge of Armagon",
+    "Darkplaces-Rogue": "Quake: Dissolution of Eternity",
+    "DarkPlaces-Nehahra": "The Seal of Nehahra",
+    "Darkplaces-Quoth": "Quoth",
     "Nexuiz": "Nexuiz Classic",
     "Xonotic": "Xonotic",
     "Transfusion": "Transfusion",
+    "GoodVs.Bad2": "Good vs Bad 2",
+    "TheEvilUnleashed": "The Evil Unleashed",
+    "Battlemech": "BattleMech",
+    "Zymotic": "Zymotic",
+    "Setheral": "Setheral",
+    "DarkPlaces-Tenebrae": "Tenebrae",
+    "Neoteric": "Neoteric",
+    "OpenQuartz": "OpenQuartz",
+    "PrydonGate": "Prydon Gate",
+    "Deluxe_Quake": "Deluxe Quake",
+    "The_Hunted": "The Hunted",
+    "Defeat_In_Detail_2": "Defeat in Detail 2",
+    "Darsana": "Darsana",
+    "Contagion_Theory": "Contagion Theory",
+    "EDU2_Prototype": "EDU2 Prototype",
+    "Prophecy": "Prophecy",
+    "Blood_Omnicide": "Blood Omnicide",
+    "Steel-Storm": "Steel Storm",
+    "Steel_Storm_2": "Steel Storm 2",
+    "Steel_Storm_A.M.M.O.": "Steel Storm A.M.M.O.",
+    "Steel_Storm_Revenants": "Steel Storm: Revenants",
+    "Tomes_of_Mephistopheles": "Tomes of Mephistopheles",
+    "Strap-on-bomb_Car": "Strap-on-bomb Car",
+    "MoonHelm": "MoonHelm",
+    "Vore_Tournament": "Vore Tournament",
+    "DOOMBRINGER": "DOOMBRINGER",
+    "battlemetal": "battleMETAL",
+    "Quake_1.5": "Quake 1.5 / Quake Combat+",
+    "Arcane_Dimensions": "Arcane Dimensions",
+    "Coppertone_Summer_Jam_2": "Coppertone Summer Jam 2",
+    # Other known Q3-like compatible games and engine families.
     "Warsow": "Warsow",
     "Warfork": "Warfork",
     "Tremulous": "Tremulous",
@@ -45,16 +83,43 @@ GAME_CATALOG = {
     "Reaction": "Reaction",
     "Daemon": "Unvanquished (Daemon engine)",
 }
+
+DP_IDENTIFIERS = {
+    "DarkPlaces-Quake", "Darkplaces-Hipnotic", "Darkplaces-Rogue", "DarkPlaces-Nehahra",
+    "Darkplaces-Quoth", "Nexuiz", "Xonotic", "Transfusion", "GoodVs.Bad2",
+    "TheEvilUnleashed", "Battlemech", "Zymotic", "Setheral", "DarkPlaces-Tenebrae",
+    "Neoteric", "OpenQuartz", "PrydonGate", "Deluxe_Quake", "The_Hunted",
+    "Defeat_In_Detail_2", "Darsana", "Contagion_Theory", "EDU2_Prototype", "Prophecy",
+    "Blood_Omnicide", "Steel-Storm", "Steel_Storm_2", "Steel_Storm_A.M.M.O.",
+    "Steel_Storm_Revenants", "Tomes_of_Mephistopheles", "Strap-on-bomb_Car", "MoonHelm",
+    "Vore_Tournament", "DOOMBRINGER", "battlemetal", "Quake_1.5", "Arcane_Dimensions",
+    "Coppertone_Summer_Jam_2",
+}
+BUILTIN_IDENTIFIERS = {"Quake3Arena", "wolfmp", "et"}
+QFUSION_IDENTIFIERS = {"Warsow", "Warfork"}
+DAEMON_IDENTIFIERS = {"Daemon", "Unvanquished"}
 STATUS_CACHE = {}
 STATUS_CACHE_LOCK = threading.Lock()
 COLOUR_CODE = re.compile(r"\^.")
 
 
 def game_details(identifier):
+    if identifier in BUILTIN_IDENTIFIERS:
+        family, source = "id Tech 3", "dpMasterX built-in"
+    elif identifier in DP_IDENTIFIERS:
+        family, source = "DarkPlaces", "DarkPlaces com_game.c"
+    elif identifier in QFUSION_IDENTIFIERS:
+        family, source = "Qfusion", "compatible ecosystem"
+    elif identifier in DAEMON_IDENTIFIERS:
+        family, source = "Daemon", "compatible ecosystem"
+    else:
+        family, source = "id Tech 3 compatible", "compatible ecosystem" if identifier in GAME_CATALOG else "observed"
     return {
         "id": identifier,
         "name": GAME_CATALOG.get(identifier, identifier),
         "known": identifier in GAME_CATALOG,
+        "engine_family": family,
+        "source": source,
     }
 
 
@@ -100,7 +165,9 @@ def detected_game(server, cvars):
         cvars.get("version", ""), cvars.get("mapname", ""), cvars.get("sv_dlURL", ""),
     )).lower()
     if "urban terror" in evidence or "q3urt" in evidence or re.search(r"(^|[^a-z])urt(?:4|[^a-z])", evidence) or "ut4_" in evidence:
-        return {"id": "q3ut4", "name": "Urban Terror", "known": True, "detected_from_status": True}
+        result = game_details("q3ut4")
+        result["detected_from_status"] = True
+        return result
     status_identifier = cvars.get("gamename") or server["game"]
     result = game_details(status_identifier)
     result["detected_from_status"] = status_identifier != server["game"]
@@ -264,7 +331,33 @@ header{{margin-bottom:2.5rem}}h1{{font-size:clamp(2rem,7vw,4.5rem);margin:.25rem
 .table,.vars{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}a{{color:#8db4ff}}details{{margin:.7rem 0;background:#141b31;border:1px solid #27314f;border-radius:10px}}summary{{cursor:pointer;padding:1rem}}.vars{{border:0;border-top:1px solid #27314f;border-radius:0}}.vars td{{white-space:normal;word-break:break-all}}footer{{margin-top:3rem;font-size:.9rem}}
 </style></head><body><header><div class="status"><i class="dot"></i>{status}</div><h1>dpMasterX</h1><p>Public master server status and live game directory.</p></header>
 <main><div class="grid">{card_html}</div><h2>Active servers</h2><div class="table"><table><thead><tr><th>Address</th><th>Name</th><th>Game</th><th>Map</th><th>Mode</th><th>Players</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div><h2>Server details</h2>{details_html}</main>
-<footer>Updated at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="{prefix}/healthz">Health</a> · JSON: <a href="{prefix}/api/status.json">status</a> / <a href="{prefix}/api/servers.json">servers</a> / <a href="{prefix}/api/games.json">game catalog</a></footer></body></html>"""
+<footer>Updated at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="{prefix}/games">Game catalog</a> · <a href="{prefix}/healthz">Health</a> · JSON: <a href="{prefix}/api/status.json">status</a> / <a href="{prefix}/api/servers.json">servers</a> / <a href="{prefix}/api/games.json">games</a></footer></body></html>"""
+
+
+def catalog_values():
+    observed_servers = active_servers()
+    observed = (
+        {server["game"] for server in observed_servers}
+        | {server["game_detected_id"] for server in observed_servers}
+    )
+    return [
+        {**game_details(identifier), "observed": identifier in observed}
+        for identifier in sorted(set(GAME_CATALOG) | observed, key=str.casefold)
+    ]
+
+
+def games_page(games, prefix=""):
+    rows = "".join(
+        f'<tr><td>{"<strong>Live</strong>" if game["observed"] else "—"}</td>'
+        f'<td>{html.escape(game["name"])}</td><td><code>{html.escape(game["id"])}</code></td>'
+        f'<td>{html.escape(game["engine_family"])}</td><td>{html.escape(game["source"])}</td></tr>'
+        for game in games
+    )
+    prefix = html.escape(prefix, quote=True)
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>dpMasterX — Game catalog</title><style>
+:root{{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b1020;color:#eef2ff}}body{{max-width:1050px;margin:0 auto;padding:3rem 1.2rem}}a{{color:#8db4ff}}p{{color:#aeb9d8;max-width:70ch}}.table{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}strong{{color:#39d98a}}
+</style></head><body><a href="{prefix}/">← Live servers</a><h1>Game catalog</h1><p>{len(games)} known or observed network identifiers. Compatible engines may define arbitrary identifiers, so live unknown values are added automatically.</p><div class="table"><table><thead><tr><th>Observed</th><th>Game</th><th>Network identifier</th><th>Engine family</th><th>Catalog source</th></tr></thead><tbody>{rows}</tbody></table></div></body></html>"""
 
 
 class RateLimiter:
@@ -366,20 +459,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             servers = active_servers()
             self._json({"count": len(servers), "servers": servers}, head)
         elif path == "/api/games.json":
-            observed_servers = active_servers()
-            observed = sorted(
-                {server["game"] for server in observed_servers}
-                | {server["game_detected_id"] for server in observed_servers}
-            )
-            catalog = [
-                {**game_details(identifier), "observed": identifier in observed}
-                for identifier in sorted(set(GAME_CATALOG) | set(observed), key=str.casefold)
-            ]
+            catalog = catalog_values()
             self._json({
                 "note": "dpMasterX accepts arbitrary game identifiers; this catalog cannot be universally exhaustive.",
                 "count": len(catalog),
                 "games": catalog,
             }, head)
+        elif path == "/games":
+            self._reply(200, games_page(catalog_values(), self._public_prefix()).encode(), "text/html; charset=utf-8", head)
         elif path == "/":
             servers = active_servers()
             self._reply(200, status_page(metric_values(servers), servers, self._public_prefix()).encode(), "text/html; charset=utf-8", head)

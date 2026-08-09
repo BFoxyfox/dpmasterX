@@ -37,6 +37,7 @@ one-minute health timer, and HTTP endpoints:
 - `GET /api/status.json` — JSON service status and aggregate counts.
 - `GET /api/servers.json` — JSON export of the active server list.
 - `GET /api/games.json` — known and currently observed game identifiers.
+- `GET /games` — browsable game and network-identifier catalog.
 
 The server list is enriched from each game's public UDP `getstatus` response.
 It includes detected game names, hostname, map, mode, players, and every cvar
