@@ -44,6 +44,10 @@ It includes detected game names, hostname, map, mode, players, and every cvar
 published by the game server. Queries are parallel, strictly timed out, and
 cached so the public page remains lightweight.
 
+Player totals and bot counts come from `getinfo`. Individual player records
+come from `getstatus`; the JSON marks `player_list_complete: false` when a
+server's size-limited status packet cannot contain every player record.
+
 The HTTP service uses a bounded worker pool, short socket timeouts and a
 per-client token bucket to shed abusive traffic. See the deployment guide for
 the configurable HTTP port and network-level protection required against

@@ -114,6 +114,12 @@ default), queried concurrently with at most eight workers, and cached for
 answer remains listed with `query_ok: false`; it never blocks the page beyond
 the configured timeout.
 
+The `getinfo` `clients` field is authoritative for `player_count`, with `bots`
+exported separately as `bot_count` and the remainder as `human_count`.
+`getstatus` supplies named player records, but some engines cap that UDP packet
+near 1400 bytes. In that case the total remains accurate while
+`player_list_complete` is false and the partial `players` array is retained.
+
 Redirect `/int/dpmX` to `/int/dpmX/` in Nginx as well. The exporter only uses
 `X-Forwarded-Prefix` to generate links; routing continues to be handled by the
 proxy's `proxy_pass` path mapping.

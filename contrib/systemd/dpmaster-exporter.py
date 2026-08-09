@@ -132,31 +132,54 @@ def parse_infostring(value):
     return {fields[index]: fields[index + 1] for index in range(0, len(fields) - 1, 2)}
 
 
-def query_server(server):
+def udp_query(server, command, expected_header):
     family = socket.AF_INET6 if server["family"] == "IPv6" else socket.AF_INET
     sock = socket.socket(family, socket.SOCK_DGRAM)
     sock.settimeout(QUERY_TIMEOUT)
     try:
         sock.connect((server["address"], server["port"]))
-        sock.send(b"\xff\xff\xff\xffgetstatus")
+        sock.send(b"\xff\xff\xff\xff" + command)
         payload = sock.recv(65535)
-        if not payload.startswith(b"\xff\xff\xff\xffstatusResponse\n"):
-            return {"query_ok": False, "cvars": {}, "players": []}
-        lines = payload[4:].decode("latin-1", "replace").splitlines()
-        cvars = parse_infostring(lines[1] if len(lines) > 1 else "")
+        if not payload.startswith(b"\xff\xff\xff\xff" + expected_header + b"\n"):
+            return []
+        return payload[4:].decode("latin-1", "replace").splitlines()
+    except OSError:
+        return []
+    finally:
+        sock.close()
+
+
+def query_server(server):
+    status_lines = udp_query(server, b"getstatus", b"statusResponse")
+    info_lines = udp_query(server, b"getinfo dpMasterX", b"infoResponse")
+    status_cvars = parse_infostring(status_lines[1] if len(status_lines) > 1 else "")
+    info = parse_infostring(info_lines[1] if len(info_lines) > 1 else "")
+    info.pop("challenge", None)
+    cvars = dict(status_cvars)
+    for key, value in info.items():
+        cvars.setdefault(key, value)
+    players = []
+    if status_lines:
         players = []
-        for line in lines[2:]:
+        for line in status_lines[2:]:
             try:
                 values = shlex.split(line)
                 if len(values) >= 3:
                     players.append({"score": int(values[0]), "ping": int(values[1]), "name": clean_q3_text(" ".join(values[2:]))})
             except (ValueError, IndexError):
                 continue
-        return {"query_ok": True, "cvars": cvars, "players": players}
-    except OSError:
-        return {"query_ok": False, "cvars": {}, "players": []}
-    finally:
-        sock.close()
+    total = int(info.get("clients", "0")) if info.get("clients", "0").isdigit() else len(players)
+    bots = int(info.get("bots", "0")) if info.get("bots", "0").isdigit() else 0
+    return {
+        "query_ok": bool(status_lines or info_lines),
+        "cvars": cvars,
+        "info": info,
+        "players": players,
+        "player_count": total,
+        "human_count": max(0, total - bots),
+        "bot_count": bots,
+        "player_list_complete": len(players) >= total,
+    }
 
 
 def detected_game(server, cvars):
@@ -197,7 +220,7 @@ def enrich_servers(servers):
                 STATUS_CACHE.clear()
     for server in servers:
         key = (server["family"], server["address"], server["port"])
-        details = results.get(key, {"query_ok": False, "cvars": {}, "players": []})
+        details = results.get(key, {"query_ok": False, "cvars": {}, "info": {}, "players": [], "player_count": 0, "human_count": 0, "bot_count": 0, "player_list_complete": False})
         server.update(details)
         detected = detected_game(server, details["cvars"])
         server["game_name"] = detected["name"]
@@ -207,7 +230,7 @@ def enrich_servers(servers):
         server["hostname"] = clean_q3_text(details["cvars"].get("sv_hostname", ""))
         server["map"] = details["cvars"].get("mapname", "")
         server["max_clients"] = int(details["cvars"].get("sv_maxclients", "0") or 0) if details["cvars"].get("sv_maxclients", "0").isdigit() else 0
-        server["player_count"] = len(details["players"])
+        server["player_count"] = details["player_count"]
         game_type = details["cvars"].get("g_gametype", server["game_type"])
         urban_terror_modes = {
             "0": "Free For All", "3": "Team Deathmatch", "4": "Team Survivor",
@@ -306,13 +329,14 @@ def status_page(values, servers, prefix=""):
         f'<td>{html.escape(server["hostname"] or "Unnamed server")}</td>'
         f'<td>{html.escape(server["game_name"])}<small><code>{html.escape(server["game"])}</code></small></td>'
         f'<td>{html.escape(server["map"] or "—")}</td><td>{html.escape(server["game_mode"] or "—")}</td>'
-        f'<td>{server["player_count"]}/{server["max_clients"] or "?"}</td><td>{html.escape(server["state"])}</td>'
+        f'<td>{server["player_count"]}/{server["max_clients"] or "?"}<small>{server["human_count"]} human · {server["bot_count"]} bots</small></td><td>{html.escape(server["state"])}</td>'
         "</tr>" for server in servers
     ) or '<tr><td colspan="7" class="empty">No active servers</td></tr>'
     details_html = "".join(
         f'<details><summary>{html.escape(server["hostname"] or server["address"])} — '
         f'{html.escape(server["address"])}:{server["port"]} ({len(server["cvars"])} cvars)</summary>'
-        '<div class="vars"><table><tbody>' + "".join(
+        + (f'<p class="notice">The server reports {server["player_count"]} clients, but its size-limited status packet contains only {len(server["players"])} player records.</p>' if not server["player_list_complete"] and server["player_count"] else '')
+        + '<div class="vars"><table><tbody>' + "".join(
             f'<tr><th><code>{html.escape(key)}</code></th><td><code>{html.escape(value)}</code></td></tr>'
             for key, value in sorted(server["cvars"].items(), key=lambda item: item[0].casefold())
         ) + '</tbody></table></div></details>'
@@ -328,7 +352,7 @@ header{{margin-bottom:2.5rem}}h1{{font-size:clamp(2rem,7vw,4.5rem);margin:.25rem
 .status{{display:inline-flex;align-items:center;gap:.6rem;color:{colour}}}.dot{{width:.7rem;height:.7rem;border-radius:50%;background:currentColor;box-shadow:0 0 18px currentColor}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem}}.card{{background:#141b31;border:1px solid #27314f;border-radius:14px;padding:1.4rem}}
 .card strong{{display:block;font-size:2rem}}.card span,footer,.empty,small{{color:#aeb9d8}}small{{display:block;margin-top:.2rem}}h2{{margin-top:3rem}}
-.table,.vars{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}a{{color:#8db4ff}}details{{margin:.7rem 0;background:#141b31;border:1px solid #27314f;border-radius:10px}}summary{{cursor:pointer;padding:1rem}}.vars{{border:0;border-top:1px solid #27314f;border-radius:0}}.vars td{{white-space:normal;word-break:break-all}}footer{{margin-top:3rem;font-size:.9rem}}
+.table,.vars{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}a{{color:#8db4ff}}details{{margin:.7rem 0;background:#141b31;border:1px solid #27314f;border-radius:10px}}summary{{cursor:pointer;padding:1rem}}.notice{{margin:0;padding:1rem;color:#ffd37a;border-top:1px solid #27314f}}.vars{{border:0;border-top:1px solid #27314f;border-radius:0}}.vars td{{white-space:normal;word-break:break-all}}footer{{margin-top:3rem;font-size:.9rem}}
 </style></head><body><header><div class="status"><i class="dot"></i>{status}</div><h1>dpMasterX</h1><p>Public master server status and live game directory.</p></header>
 <main><div class="grid">{card_html}</div><h2>Active servers</h2><div class="table"><table><thead><tr><th>Address</th><th>Name</th><th>Game</th><th>Map</th><th>Mode</th><th>Players</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div><h2>Server details</h2>{details_html}</main>
 <footer>Updated at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="{prefix}/games">Game catalog</a> · <a href="{prefix}/healthz">Health</a> · JSON: <a href="{prefix}/api/status.json">status</a> / <a href="{prefix}/api/servers.json">servers</a> / <a href="{prefix}/api/games.json">games</a></footer></body></html>"""
