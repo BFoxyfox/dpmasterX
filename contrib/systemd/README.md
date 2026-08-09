@@ -9,6 +9,7 @@ and Prometheus exporter, and a recurring UDP probe.
 - service account: `dpmaster` with no interactive shell
 - writable state directory: `/var/lib/dpmaster`
 - helper scripts: `/usr/local/libexec`
+- exporter configuration: `/etc/default/dpmaster-exporter`
 - UDP master port: `27950`
 - TCP monitoring port: `80`
 
@@ -29,7 +30,30 @@ The exporter runs separately so the C daemon does not parse HTTP or acquire
 privileges for port 80. Only the exporter receives `CAP_NET_BIND_SERVICE`; its
 filesystem and process access are restricted by systemd.
 
+## Changing the HTTP port
+
+Install `dpmaster-exporter.conf` as `/etc/default/dpmaster-exporter`, then set:
+
+```ini
+DPMASTER_HTTP_PORT=8080
+```
+
+Apply the change with:
+
+```sh
+systemctl restart dpmaster-exporter.service
+```
+
+Ports below 1024 work because the unit grants `CAP_NET_BIND_SERVICE`. Remember
+to allow the selected TCP port in the host and provider firewalls. The listen
+address can similarly be changed with `DPMASTER_HTTP_ADDRESS`.
+
 ## HTTP endpoints
+
+### `GET /`
+
+Public responsive status page showing service availability and aggregate
+server counts. Responses include restrictive browser security headers.
 
 ### `GET /healthz`
 
@@ -52,6 +76,21 @@ Exposes these Prometheus gauges:
 
 The server counts come from the persisted snapshot and exclude expired rows.
 `dpmaster_up` is based on a live UDP request.
+
+## HTTP abuse and DDoS protection
+
+The exporter accepts at most 32 simultaneous requests, applies a five-second
+socket timeout, and limits each source IP to a burst of 20 requests followed by
+5 requests/second. Its systemd unit also caps tasks, memory, and open files.
+These defaults can be changed with `DPMASTER_HTTP_MAX_WORKERS`,
+`DPMASTER_HTTP_RATE`, and `DPMASTER_HTTP_BURST` environment variables.
+
+These controls protect the process from slow or noisy clients, but cannot stop
+an attack that saturates the host's network link. For a public deployment,
+place TCP/80 behind a provider with L3/L4 DDoS mitigation (or a reverse proxy/CDN
+whose proxy IP ranges are enforced at the firewall). Keep UDP/27950 under the
+hosting provider's game/UDP protection. Do not trust forwarded client-address
+headers unless the direct connection is restricted to that proxy.
 
 ## Operations
 

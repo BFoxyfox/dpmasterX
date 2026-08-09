@@ -10,6 +10,11 @@ Group=dpmaster
 ExecStart=/usr/local/libexec/dpmaster-exporter.py
 Restart=on-failure
 RestartSec=5
+# The application also has a bounded worker pool and per-IP token bucket.
+EnvironmentFile=-/etc/default/dpmaster-exporter
+TasksMax=64
+MemoryMax=128M
+LimitNOFILE=1024
 AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 NoNewPrivileges=true

@@ -3,7 +3,7 @@
 
 This maintained fork adds atomic persistence for validated servers, heartbeat
 rate limiting, hardened systemd units, a UDP health probe, and Prometheus
-metrics on HTTP port 80.
+metrics and a public status page on HTTP port 80.
 
 ## Quick start
 
@@ -33,6 +33,18 @@ one-minute health timer, and HTTP endpoints:
 - `GET /healthz` — probes the UDP master and returns HTTP 200 or 503.
 - `GET /metrics` — Prometheus text metrics for availability, server counts,
   address families, occupancy, state age, and exporter uptime.
+- `GET /` — public, responsive service-status page.
+
+The HTTP service uses a bounded worker pool, short socket timeouts and a
+per-client token bucket to shed abusive traffic. See the deployment guide for
+the configurable HTTP port and network-level protection required against
+volumetric DDoS attacks.
+
+To change the public HTTP listener, install
+`contrib/systemd/dpmaster-exporter.conf` as
+`/etc/default/dpmaster-exporter`, edit `DPMASTER_HTTP_PORT`, then restart
+`dpmaster-exporter.service`. The selected TCP port must also be allowed by the
+host and provider firewalls.
 
 The Docker image builds the source from this repository and stores persistent
 state in the `/var/lib/dpmaster` volume.
