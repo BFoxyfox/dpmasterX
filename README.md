@@ -1,6 +1,12 @@
 
 # Dpmaster, an open master server
 
+This fork adds atomic persistence for validated servers, heartbeat rate limiting,
+hardened systemd units, a UDP health probe, and Prometheus metrics on HTTP port 80.
+
+Build with `make -C src release`. Production deployment assets are available in
+`contrib/systemd`; the metrics endpoint exposes `/healthz` and `/metrics`.
+
 ## General information
 
 

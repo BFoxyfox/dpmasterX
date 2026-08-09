@@ -1,22 +1,21 @@
-FROM alpine:latest
+FROM alpine:3.22 AS build
 
 LABEL Maintainer="g0dzuki99 <chris@chaoscontrol.org>" \
       Description="Master server for Quake III Arena."
 
-RUN adduser --system dpmaster
+RUN apk add --no-cache gcc make musl-dev
+COPY . /dpmaster
+RUN make -C /dpmaster/src release
 
-RUN apk update \
-    && apk upgrade \
-    && apk add curl g++ gcc make git sdl2-dev
-
-RUN git clone https://github.com/bad-mushroom/dpmaster.git /dpmaster \
-    && cd dpmaster/src \
-    && make release
+FROM alpine:3.22
+RUN adduser -S -D -H dpmaster && mkdir -p /var/lib/dpmaster \
+    && chown dpmaster:dpmaster /var/lib/dpmaster
+COPY --from=build /dpmaster/src/dpmaster /usr/local/bin/dpmaster
 
 EXPOSE 27950/udp
 
 USER dpmaster
+VOLUME [ "/var/lib/dpmaster" ]
 
-ENTRYPOINT [ "/dpmaster/src/dpmaster" ]
-
-CMD [ "--help" ]
+ENTRYPOINT [ "/usr/local/bin/dpmaster" ]
+CMD [ "--flood-protection", "--state-file", "/var/lib/dpmaster/servers.state", "--verbose", "2" ]

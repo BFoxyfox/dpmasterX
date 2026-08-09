@@ -1,0 +1,44 @@
+[Unit]
+Description=Urban Terror Master Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=dpmaster
+Group=dpmaster
+ExecStart=/usr/local/bin/dpmaster --flood-protection --state-file /var/lib/dpmaster/servers.state --verbose 2
+ExecStartPost=/usr/local/libexec/dpmaster-health.py
+Restart=on-failure
+RestartSec=5
+StateDirectory=dpmaster
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+ProcSubset=pid
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

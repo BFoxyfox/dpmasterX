@@ -1,0 +1,11 @@
+[Unit]
+Description=Check dpmaster every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+Unit=dpmaster-health.service
+
+[Install]
+WantedBy=timers.target

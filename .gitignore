@@ -1,0 +1,5 @@
+src/*.o
+src/dpmaster
+src/dpmaster.exe
+__pycache__/
+*.pyc

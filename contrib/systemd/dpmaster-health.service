@@ -1,0 +1,15 @@
+[Unit]
+Description=Probe dpmaster UDP availability
+After=dpmaster.service
+
+[Service]
+Type=oneshot
+User=dpmaster
+Group=dpmaster
+ExecStart=/usr/local/libexec/dpmaster-health.py
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET
