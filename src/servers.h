@@ -99,9 +99,14 @@ extern qboolean allow_loopback;
 qboolean Sv_SetHashSize (unsigned int size);
 qboolean Sv_SetMaxNbServers (unsigned int nb);
 qboolean Sv_SetMaxNbServersPerAddress (unsigned int nb);
+qboolean Sv_SetStateFile (const char* path);
 
 // Initialize the server list and hash tables
 qboolean Sv_Init (void);
+
+// Load and atomically save validated servers across process restarts
+qboolean Sv_LoadState (void);
+qboolean Sv_SaveState (void);
 
 // Search for a particular server in the list; add it if necessary
 // NOTE: doesn't change the current position for "Sv_GetNext"

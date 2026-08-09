@@ -812,3 +812,9 @@ game_options_t Game_GetOptions (const char* game)
 	else
 		return GAME_OPTION_NONE;
 }
+
+
+const game_properties_t* Game_GetProperties (const char* game)
+{
+	return Game_GetAnonymous (game, false);
+}

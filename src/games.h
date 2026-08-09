@@ -94,5 +94,8 @@ const game_properties_t* Game_GetPropertiesByHeartbeat (const char* heartbeat_ta
 // Returns the options of a game
 game_options_t Game_GetOptions (const char* game);
 
+// Returns the properties associated with a game name, or NULL if unknown
+const game_properties_t* Game_GetProperties (const char* game);
+
 
 #endif  // #ifndef _GAMES_H_

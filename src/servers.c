@@ -23,6 +23,7 @@
 
 #include "common.h"
 #include "system.h"
+#include "games.h"
 #include "servers.h"
 
 
@@ -55,6 +56,9 @@ static int last_server_ind = -1;
 
 // List of address mappings. They are sorted by "from" field (IP, then port)
 static addrmap_t* addrmaps = NULL;
+static char* state_file_path = NULL;
+
+#define STATE_FILE_MAGIC "dpmaster-state-v1"
 
 
 // ---------- Public variables ---------- //
@@ -476,6 +480,17 @@ qboolean Sv_SetMaxNbServersPerAddress (unsigned int nb)
 }
 
 
+qboolean Sv_SetStateFile (const char* path)
+{
+	if (servers != NULL || path == NULL || path[0] == '\0')
+		return false;
+
+	free (state_file_path);
+	state_file_path = strdup (path);
+	return state_file_path != NULL;
+}
+
+
 /*
 ====================
 Sv_Init
@@ -509,6 +524,166 @@ qboolean Sv_Init (void)
 	if (! Com_UserHashTable_Init (&hash_table, sv_hash_size, "server"))
 		return false;
 
+	return true;
+}
+
+
+qboolean Sv_SaveState (void)
+{
+	FILE* file;
+	char* temporary_path;
+	int ind;
+
+	if (state_file_path == NULL)
+		return true;
+
+	temporary_path = malloc (strlen (state_file_path) + 5);
+	if (temporary_path == NULL)
+		return false;
+	sprintf (temporary_path, "%s.tmp", state_file_path);
+
+	file = fopen (temporary_path, "w");
+	if (file == NULL)
+	{
+		Com_Printf (MSG_WARNING, "> WARNING: can't open state file %s (%s)\n",
+					temporary_path, strerror (errno));
+		free (temporary_path);
+		return false;
+	}
+
+	fprintf (file, "%s\n", STATE_FILE_MAGIC);
+	for (ind = 0; ind <= last_used_slot; ind++)
+	{
+		server_t* sv = &servers[ind];
+		char address[INET6_ADDRSTRLEN];
+		const void* binary_address;
+		unsigned int family;
+
+		if (sv->state <= sv_state_uninitialized || sv->timeout <= crt_time)
+			continue;
+
+		family = (sv->user.address.ss_family == AF_INET) ? 4 : 6;
+		if (family == 4)
+			binary_address = &((const struct sockaddr_in*)&sv->user.address)->sin_addr;
+		else
+			binary_address = &((const struct sockaddr_in6*)&sv->user.address)->sin6_addr;
+
+		if (inet_ntop (sv->user.address.ss_family, binary_address,
+					address, sizeof (address)) == NULL)
+			continue;
+
+		fprintf (file, "%lu %u %s %hu %d %d %s %s\n",
+				(unsigned long)sv->timeout, family, address,
+				Sys_GetSockaddrPort (&sv->user.address), sv->protocol,
+				(int)sv->state, sv->gamename, sv->gametype);
+	}
+
+	if (fflush (file) != 0
+#ifndef WIN32
+		|| fsync (fileno (file)) != 0
+#endif
+		|| fclose (file) != 0 || rename (temporary_path, state_file_path) != 0)
+	{
+		Com_Printf (MSG_WARNING, "> WARNING: can't commit state file %s (%s)\n",
+					state_file_path, strerror (errno));
+		remove (temporary_path);
+		free (temporary_path);
+		return false;
+	}
+
+	free (temporary_path);
+	return true;
+}
+
+
+qboolean Sv_LoadState (void)
+{
+	FILE* file;
+	char line[512];
+	unsigned int loaded = 0;
+
+	if (state_file_path == NULL)
+		return true;
+
+	file = fopen (state_file_path, "r");
+	if (file == NULL)
+	{
+		if (errno == ENOENT)
+			return true;
+		Com_Printf (MSG_WARNING, "> WARNING: can't read state file %s (%s)\n",
+					state_file_path, strerror (errno));
+		return false;
+	}
+
+	if (fgets (line, sizeof (line), file) == NULL ||
+		strcmp (line, STATE_FILE_MAGIC "\n") != 0)
+	{
+		Com_Printf (MSG_WARNING, "> WARNING: ignoring invalid state file %s\n",
+					state_file_path);
+		fclose (file);
+		return false;
+	}
+
+	while (fgets (line, sizeof (line), file) != NULL)
+	{
+		unsigned long expiry;
+		unsigned int family;
+		char address_string[INET6_ADDRSTRLEN];
+		unsigned short port;
+		int protocol, state;
+		char gamename[GAMENAME_LENGTH], gametype[GAMETYPE_LENGTH];
+		struct sockaddr_storage address;
+		socklen_t addrlen;
+		server_t* sv;
+
+		if (sscanf (line, "%lu %u %45s %hu %d %d %63s %31s",
+				   &expiry, &family, address_string, &port, &protocol,
+				   &state, gamename, gametype) != 8 || expiry <= (unsigned long)crt_time ||
+				   port == 0 || protocol <= 0 ||
+				   state < sv_state_empty || state > sv_state_full ||
+				   !Game_IsAccepted (gamename))
+			continue;
+
+		memset (&address, 0, sizeof (address));
+		if (family == 4)
+		{
+			struct sockaddr_in* address4 = (struct sockaddr_in*)&address;
+			address4->sin_family = AF_INET;
+			address4->sin_port = htons (port);
+			addrlen = sizeof (*address4);
+			if (inet_pton (AF_INET, address_string, &address4->sin_addr) != 1)
+				continue;
+		}
+		else if (family == 6)
+		{
+			struct sockaddr_in6* address6 = (struct sockaddr_in6*)&address;
+			address6->sin6_family = AF_INET6;
+			address6->sin6_port = htons (port);
+			addrlen = sizeof (*address6);
+			if (inet_pton (AF_INET6, address_string, &address6->sin6_addr) != 1)
+				continue;
+		}
+		else
+			continue;
+
+		strncpy (peer_address, Sys_SockaddrToString (&address, addrlen),
+				 sizeof (peer_address) - 1);
+		peer_address[sizeof (peer_address) - 1] = '\0';
+		sv = Sv_GetByAddr (&address, addrlen, true);
+		if (sv == NULL)
+			continue;
+		sv->timeout = (time_t)expiry;
+		sv->protocol = protocol;
+		sv->state = (server_state_t)state;
+		strcpy (sv->gamename, gamename);
+		strcpy (sv->gametype, gametype);
+		sv->anon_properties = Game_GetProperties (gamename);
+		loaded++;
+	}
+
+	fclose (file);
+	Com_Printf (MSG_NORMAL, "> Restored %u validated server(s) from %s\n",
+				loaded, state_file_path);
 	return true;
 }
 

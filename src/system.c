@@ -484,6 +484,7 @@ Parse a system-dependent command line option
 */
 cmdline_status_t Sys_Cmdline_Option (const cmdlineopt_t* opt, const char** params, unsigned int nb_params)
 {
+	(void)nb_params;
 #ifndef WIN32
 
 	const char* opt_name;

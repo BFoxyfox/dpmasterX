@@ -186,6 +186,15 @@ static const cmdlineopt_t cmdline_options [] =
 		1
 	},
 	{
+		"state-file",
+		"<file_path>",
+		"Persist validated servers in <file_path>",
+		{ 0, 0 },
+		'\0',
+		1,
+		1
+	},
+	{
 		"max-servers",
 		"<max_servers>",
 		"Maximum number of servers recorded (default: %d)",
@@ -451,6 +460,13 @@ static cmdline_status_t Cmdline_Option (const cmdlineopt_t* opt, const char** pa
 	else if (strcmp (opt_name, "map") == 0)
 	{
 		if (! Sv_AddAddressMapping (params[0]))
+			return CMDLINE_STATUS_INVALID_OPT_PARAMS;
+	}
+
+	// Persistent server state
+	else if (strcmp (opt_name, "state-file") == 0)
+	{
+		if (! Sv_SetStateFile (params[0]))
 			return CMDLINE_STATUS_INVALID_OPT_PARAMS;
 	}
 
@@ -924,6 +940,7 @@ static qboolean SecureInit (void)
 	// Initialize the server list and hash table
 	if (! Sv_Init ())
 		return false;
+	Sv_LoadState ();
 
 	// Initialize the client list and hash table (query rate throttling)
 	if (! Cl_Init ())
@@ -1041,7 +1058,7 @@ int main (int argc, const char* argv [])
 		{
 			struct sockaddr_storage address;
 			socklen_t addrlen;
-			int nb_bytes;
+			ssize_t nb_bytes;
 			char packet [MAX_PACKET_SIZE_IN + 1];  // "+ 1" because we append a '\0'
 			socket_t crt_sock = listen_sockets[sock_ind].socket;
 
@@ -1057,7 +1074,7 @@ int main (int argc, const char* argv [])
 			if (nb_bytes <= 0)
 			{
 				Com_Printf (MSG_WARNING,
-							"> WARNING: \"recvfrom\" returned %d\n", nb_bytes);
+							"> WARNING: \"recvfrom\" returned %ld\n", (long)nb_bytes);
 				continue;
 			}
 

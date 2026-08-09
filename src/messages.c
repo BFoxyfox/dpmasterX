@@ -40,6 +40,47 @@
 
 // Maximum size of a reponse packet
 #define MAX_PACKET_SIZE_OUT 1400
+#define HEARTBEAT_LIMIT_SLOTS 1024
+#define HEARTBEAT_LIMIT_WINDOW 10
+#define HEARTBEAT_LIMIT_BURST 10
+
+typedef struct
+{
+	struct sockaddr_storage address;
+	socklen_t addrlen;
+	time_t window_start;
+	unsigned int count;
+} heartbeat_limit_t;
+
+static heartbeat_limit_t heartbeat_limits[HEARTBEAT_LIMIT_SLOTS];
+static unsigned int heartbeat_limit_next;
+
+static qboolean HeartbeatRateLimited (const struct sockaddr_storage* address,
+									  socklen_t addrlen)
+{
+	unsigned int ind;
+	for (ind = 0; ind < HEARTBEAT_LIMIT_SLOTS; ind++)
+	{
+		heartbeat_limit_t* entry = &heartbeat_limits[ind];
+		if (entry->addrlen == addrlen && memcmp (&entry->address, address, addrlen) == 0)
+		{
+			if (crt_time - entry->window_start >= HEARTBEAT_LIMIT_WINDOW)
+			{
+				entry->window_start = crt_time;
+				entry->count = 0;
+			}
+			entry->count++;
+			return entry->count > HEARTBEAT_LIMIT_BURST;
+		}
+	}
+	ind = heartbeat_limit_next++ % HEARTBEAT_LIMIT_SLOTS;
+	memset (&heartbeat_limits[ind], 0, sizeof (heartbeat_limits[ind]));
+	memcpy (&heartbeat_limits[ind].address, address, addrlen);
+	heartbeat_limits[ind].addrlen = addrlen;
+	heartbeat_limits[ind].window_start = crt_time;
+	heartbeat_limits[ind].count = 1;
+	return false;
+}
 
 
 // Types of messages (with samples):
@@ -217,7 +258,7 @@ static void SendGetInfo (server_t* server, socket_t recv_socket, qboolean force_
 		const char* challenge;
 
 		challenge = BuildChallenge ();
-		strncpy (server->challenge, challenge, sizeof (server->challenge) - 1);
+		snprintf (server->challenge, sizeof (server->challenge), "%s", challenge);
 		server->challenge_timeout = crt_time + TIMEOUT_CHALLENGE;
 	}
 
@@ -861,7 +902,7 @@ static void HandleInfoResponse (server_t* server, const char* msg)
 	strncpy (server->gamename, value, sizeof (server->gamename) - 1);
 	server->protocol = new_protocol;
 	server->anon_properties = server->hb_properties;
-	strncpy (server->gametype, new_gametype, sizeof (server->gametype) - 1);
+	snprintf (server->gametype, sizeof (server->gametype), "%s", new_gametype);
 	if (new_clients == 0)
 		server->state = sv_state_empty;
 	else if (new_clients == new_maxclients)
@@ -871,6 +912,7 @@ static void HandleInfoResponse (server_t* server, const char* msg)
 
 	// Set a new timeout
 	server->timeout = crt_time + TIMEOUT_INFORESPONSE;
+	Sv_SaveState ();
 }
 
 
@@ -888,9 +930,15 @@ void HandleMessage (const char* msg, size_t length,
 					socklen_t addrlen,
 					socket_t recv_socket)
 {
+	(void)length;
 	// If it's an heartbeat
 	if (!strncmp (S2M_HEARTBEAT, msg, strlen (S2M_HEARTBEAT)))
 	{
+		if (HeartbeatRateLimited (address, addrlen))
+		{
+			Com_Printf (MSG_WARNING, "> WARNING: heartbeat rate limit reached for %s\n", peer_address);
+			return;
+		}
 		HandleHeartbeat (msg + strlen (S2M_HEARTBEAT), address, addrlen,
 						 recv_socket);
 	}
