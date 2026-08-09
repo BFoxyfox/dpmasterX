@@ -34,6 +34,8 @@ one-minute health timer, and HTTP endpoints:
 - `GET /metrics` — Prometheus text metrics for availability, server counts,
   address families, occupancy, state age, and exporter uptime.
 - `GET /` — public, responsive service-status page.
+- `GET /api/status.json` — JSON service status and aggregate counts.
+- `GET /api/servers.json` — JSON export of the active server list.
 
 The HTTP service uses a bounded worker pool, short socket timeouts and a
 per-client token bucket to shed abusive traffic. See the deployment guide for

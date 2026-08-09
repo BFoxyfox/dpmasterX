@@ -3,6 +3,7 @@
 
 import html
 import http.server
+import json
 import os
 import socket
 import threading
@@ -32,34 +33,49 @@ def master_up():
         sock.close()
 
 
-def metric_values():
+def active_servers():
     now = int(time.time())
-    active = ipv4 = ipv6 = empty = occupied = full = 0
-    newest = 0
+    servers = []
     try:
-        newest = int(os.path.getmtime(STATE))
         with open(STATE, encoding="ascii") as stream:
             next(stream, None)
             for line in stream:
                 fields = line.split()
                 if len(fields) != 8 or int(fields[0]) <= now:
                     continue
-                active += 1
-                ipv4 += fields[1] == "4"
-                ipv6 += fields[1] == "6"
-                empty += fields[5] == "2"
-                occupied += fields[5] == "3"
-                full += fields[5] == "4"
+                expiry, family, address, port, protocol, state, game, game_type = fields
+                state_name = {"2": "empty", "3": "occupied", "4": "full"}.get(state, "unknown")
+                servers.append({
+                    "address": address,
+                    "port": int(port),
+                    "family": f"IPv{family}",
+                    "protocol": int(protocol),
+                    "state": state_name,
+                    "game": game,
+                    "game_type": game_type,
+                    "expires_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(expiry))),
+                })
     except (OSError, ValueError):
         pass
+    return servers
+
+
+def metric_values(servers=None):
+    if servers is None:
+        servers = active_servers()
+    now = int(time.time())
+    try:
+        newest = int(os.path.getmtime(STATE))
+    except OSError:
+        newest = 0
     return {
         "dpmaster_up": int(master_up()),
-        "dpmaster_servers_active": active,
-        "dpmaster_servers_ipv4": ipv4,
-        "dpmaster_servers_ipv6": ipv6,
-        "dpmaster_servers_empty": empty,
-        "dpmaster_servers_occupied": occupied,
-        "dpmaster_servers_full": full,
+        "dpmaster_servers_active": len(servers),
+        "dpmaster_servers_ipv4": sum(server["family"] == "IPv4" for server in servers),
+        "dpmaster_servers_ipv6": sum(server["family"] == "IPv6" for server in servers),
+        "dpmaster_servers_empty": sum(server["state"] == "empty" for server in servers),
+        "dpmaster_servers_occupied": sum(server["state"] == "occupied" for server in servers),
+        "dpmaster_servers_full": sum(server["state"] == "full" for server in servers),
         "dpmaster_state_age_seconds": max(0, now - newest) if newest else -1,
         "dpmaster_exporter_uptime_seconds": int(time.time() - STARTED),
     }
@@ -69,31 +85,41 @@ def metrics(values):
     return "".join(f"# TYPE {key} gauge\n{key} {value}\n" for key, value in values.items())
 
 
-def status_page(values):
+def status_page(values, servers, prefix=""):
     online = bool(values["dpmaster_up"])
-    status = "En ligne" if online else "Indisponible"
+    status = "Online" if online else "Unavailable"
     colour = "#39d98a" if online else "#ff5c5c"
     cards = (
-        ("Serveurs actifs", values["dpmaster_servers_active"]),
+        ("Active servers", values["dpmaster_servers_active"]),
         ("IPv4", values["dpmaster_servers_ipv4"]),
         ("IPv6", values["dpmaster_servers_ipv6"]),
-        ("Parties en cours", values["dpmaster_servers_occupied"]),
+        ("Games in progress", values["dpmaster_servers_occupied"]),
     )
     card_html = "".join(
         f'<div class="card"><strong>{html.escape(str(value))}</strong><span>{html.escape(label)}</span></div>'
         for label, value in cards
     )
+    rows = "".join(
+        "<tr>"
+        f'<td><code>{html.escape(("[" + server["address"] + "]" if server["family"] == "IPv6" else server["address"]) + ":" + str(server["port"]))}</code></td>'
+        f'<td>{html.escape(server["game"])}</td><td>{html.escape(server["game_type"])}</td>'
+        f'<td>{html.escape(str(server["protocol"]))}</td><td>{html.escape(server["state"])}</td>'
+        "</tr>" for server in servers
+    ) or '<tr><td colspan="5" class="empty">No active servers</td></tr>'
+    prefix = html.escape(prefix, quote=True)
     return f"""<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>dpmaster — État du service</title><style>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>dpmaster — Service status</title><style>
 :root{{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b1020;color:#eef2ff}}
-body{{max-width:900px;margin:0 auto;padding:clamp(2rem,8vw,6rem) 1.2rem}}
+body{{max-width:1050px;margin:0 auto;padding:clamp(2rem,8vw,6rem) 1.2rem}}
 header{{margin-bottom:2.5rem}}h1{{font-size:clamp(2rem,7vw,4.5rem);margin:.25rem 0}}
 .status{{display:inline-flex;align-items:center;gap:.6rem;color:{colour}}}.dot{{width:.7rem;height:.7rem;border-radius:50%;background:currentColor;box-shadow:0 0 18px currentColor}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem}}.card{{background:#141b31;border:1px solid #27314f;border-radius:14px;padding:1.4rem}}
-.card strong{{display:block;font-size:2rem}}.card span,footer{{color:#aeb9d8}}footer{{margin-top:3rem;font-size:.9rem}}
-</style></head><body><header><div class="status"><i class="dot"></i>{status}</div><h1>Serveur maître</h1><p>État public du service dpmaster.</p></header>
-<main class="grid">{card_html}</main><footer>Actualisé à {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="/healthz">Santé</a></footer></body></html>"""
+.card strong{{display:block;font-size:2rem}}.card span,footer,.empty{{color:#aeb9d8}}h2{{margin-top:3rem}}
+.table{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}a{{color:#8db4ff}}footer{{margin-top:3rem;font-size:.9rem}}
+</style></head><body><header><div class="status"><i class="dot"></i>{status}</div><h1>Master server</h1><p>Public dpmaster service status.</p></header>
+<main><div class="grid">{card_html}</div><h2>Active servers</h2><div class="table"><table><thead><tr><th>Address</th><th>Game</th><th>Type</th><th>Protocol</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div></main>
+<footer>Updated at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="{prefix}/healthz">Health</a> · JSON: <a href="{prefix}/api/status.json">status</a> / <a href="{prefix}/api/servers.json">servers</a></footer></body></html>"""
 
 
 class RateLimiter:
@@ -141,6 +167,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not head:
             self.wfile.write(body)
 
+    def _public_prefix(self):
+        """Return a safe path prefix explicitly supplied by a trusted proxy."""
+        prefix = self.headers.get("X-Forwarded-Prefix", "").strip().rstrip("/")
+        parsed = urlsplit(prefix)
+        if not prefix or not prefix.startswith("/") or prefix.startswith("//"):
+            return ""
+        if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment or parsed.path != prefix:
+            return ""
+        return prefix
+
+    def _json(self, value, head=False):
+        body = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
+        self._reply(200, body, "application/json; charset=utf-8", head)
+
     def _get(self, head=False):
         if not LIMITER.allow(self.client_address[0]):
             self.close_connection = True
@@ -153,8 +193,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/metrics":
             body = metrics(metric_values()).encode()
             self._reply(200, body, "text/plain; version=0.0.4; charset=utf-8", head)
+        elif path == "/api/status.json":
+            servers = active_servers()
+            values = metric_values(servers)
+            self._json({
+                "status": "online" if values["dpmaster_up"] else "unavailable",
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "servers": {
+                    "active": values["dpmaster_servers_active"],
+                    "ipv4": values["dpmaster_servers_ipv4"],
+                    "ipv6": values["dpmaster_servers_ipv6"],
+                    "empty": values["dpmaster_servers_empty"],
+                    "occupied": values["dpmaster_servers_occupied"],
+                    "full": values["dpmaster_servers_full"],
+                },
+                "state_age_seconds": values["dpmaster_state_age_seconds"],
+                "exporter_uptime_seconds": values["dpmaster_exporter_uptime_seconds"],
+            }, head)
+        elif path == "/api/servers.json":
+            servers = active_servers()
+            self._json({"count": len(servers), "servers": servers}, head)
         elif path == "/":
-            self._reply(200, status_page(metric_values()).encode(), "text/html; charset=utf-8", head)
+            servers = active_servers()
+            self._reply(200, status_page(metric_values(servers), servers, self._public_prefix()).encode(), "text/html; charset=utf-8", head)
         else:
             self._reply(404, b"not found\n", head=head)
 
