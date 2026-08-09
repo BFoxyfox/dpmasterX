@@ -81,7 +81,8 @@ The server counts come from the persisted snapshot and exclude expired rows.
 
 - `GET /api/status.json` — service health and aggregate server counts.
 - `GET /api/servers.json` — detailed active server list including address,
-  port, IP family, protocol, state, game, game type, and expiry time.
+  port, IP family, protocol, state, detected game, map, mode, players, expiry
+  time, and all cvars exposed by the server's UDP `getstatus` response.
 - `GET /api/games.json` — known game identifier catalog, augmented with any
   identifiers currently observed by this master.
 
@@ -104,6 +105,12 @@ arbitrary `gamename` (ioquake3 exposes this as `com_gamename`). The exporter
 therefore decodes known identifiers, exposes both `game` (raw identifier) and
 `game_name` (display label), and leaves unknown identifiers visible rather than
 guessing incorrectly.
+
+Status enrichment is bounded by `DPMASTER_QUERY_TIMEOUT` (0.8 seconds by
+default), queried concurrently with at most eight workers, and cached for
+`DPMASTER_QUERY_CACHE_TTL` seconds (60 by default). A server that does not
+answer remains listed with `query_ok: false`; it never blocks the page beyond
+the configured timeout.
 
 Redirect `/int/dpmX` to `/int/dpmX/` in Nginx as well. The exporter only uses
 `X-Forwarded-Prefix` to generate links; routing continues to be handled by the

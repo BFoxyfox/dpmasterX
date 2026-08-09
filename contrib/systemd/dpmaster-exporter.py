@@ -5,10 +5,13 @@ import html
 import http.server
 import json
 import os
+import re
+import shlex
 import socket
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
 STATE = os.environ.get("DPMASTER_STATE_FILE", "/var/lib/dpmaster/servers.state")
@@ -18,6 +21,8 @@ PUBLIC_PREFIX = os.environ.get("DPMASTER_HTTP_PREFIX", "").strip().rstrip("/")
 MAX_WORKERS = int(os.environ.get("DPMASTER_HTTP_MAX_WORKERS", "32"))
 RATE = float(os.environ.get("DPMASTER_HTTP_RATE", "5"))
 BURST = float(os.environ.get("DPMASTER_HTTP_BURST", "20"))
+QUERY_TIMEOUT = float(os.environ.get("DPMASTER_QUERY_TIMEOUT", "0.8"))
+QUERY_CACHE_TTL = float(os.environ.get("DPMASTER_QUERY_CACHE_TTL", "60"))
 STARTED = time.time()
 
 # dpmaster accepts arbitrary game identifiers. This catalog covers identifiers
@@ -40,6 +45,9 @@ GAME_CATALOG = {
     "Reaction": "Reaction",
     "Daemon": "Unvanquished (Daemon engine)",
 }
+STATUS_CACHE = {}
+STATUS_CACHE_LOCK = threading.Lock()
+COLOUR_CODE = re.compile(r"\^.")
 
 
 def game_details(identifier):
@@ -48,6 +56,99 @@ def game_details(identifier):
         "name": GAME_CATALOG.get(identifier, identifier),
         "known": identifier in GAME_CATALOG,
     }
+
+
+def clean_q3_text(value):
+    return COLOUR_CODE.sub("", value).strip()
+
+
+def parse_infostring(value):
+    fields = value.lstrip("\\").split("\\")
+    return {fields[index]: fields[index + 1] for index in range(0, len(fields) - 1, 2)}
+
+
+def query_server(server):
+    family = socket.AF_INET6 if server["family"] == "IPv6" else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_DGRAM)
+    sock.settimeout(QUERY_TIMEOUT)
+    try:
+        sock.connect((server["address"], server["port"]))
+        sock.send(b"\xff\xff\xff\xffgetstatus")
+        payload = sock.recv(65535)
+        if not payload.startswith(b"\xff\xff\xff\xffstatusResponse\n"):
+            return {"query_ok": False, "cvars": {}, "players": []}
+        lines = payload[4:].decode("latin-1", "replace").splitlines()
+        cvars = parse_infostring(lines[1] if len(lines) > 1 else "")
+        players = []
+        for line in lines[2:]:
+            try:
+                values = shlex.split(line)
+                if len(values) >= 3:
+                    players.append({"score": int(values[0]), "ping": int(values[1]), "name": clean_q3_text(" ".join(values[2:]))})
+            except (ValueError, IndexError):
+                continue
+        return {"query_ok": True, "cvars": cvars, "players": players}
+    except OSError:
+        return {"query_ok": False, "cvars": {}, "players": []}
+    finally:
+        sock.close()
+
+
+def detected_game(server, cvars):
+    evidence = " ".join((
+        server["game"], cvars.get("gamename", ""), cvars.get("fs_game", ""),
+        cvars.get("version", ""), cvars.get("mapname", ""), cvars.get("sv_dlURL", ""),
+    )).lower()
+    if "urban terror" in evidence or "q3urt" in evidence or re.search(r"(^|[^a-z])urt(?:4|[^a-z])", evidence) or "ut4_" in evidence:
+        return {"id": "q3ut4", "name": "Urban Terror", "known": True, "detected_from_status": True}
+    status_identifier = cvars.get("gamename") or server["game"]
+    result = game_details(status_identifier)
+    result["detected_from_status"] = status_identifier != server["game"]
+    return result
+
+
+def enrich_servers(servers):
+    now = time.monotonic()
+    pending = []
+    results = {}
+    with STATUS_CACHE_LOCK:
+        for server in servers:
+            key = (server["family"], server["address"], server["port"])
+            cached = STATUS_CACHE.get(key)
+            if cached and now - cached[0] < QUERY_CACHE_TTL:
+                results[key] = cached[1]
+            else:
+                pending.append((key, server))
+    if pending:
+        with ThreadPoolExecutor(max_workers=min(8, len(pending))) as pool:
+            queried = list(pool.map(lambda item: query_server(item[1]), pending))
+        with STATUS_CACHE_LOCK:
+            for (key, _), result in zip(pending, queried):
+                STATUS_CACHE[key] = (now, result)
+                results[key] = result
+            if len(STATUS_CACHE) > 10000:
+                STATUS_CACHE.clear()
+    for server in servers:
+        key = (server["family"], server["address"], server["port"])
+        details = results.get(key, {"query_ok": False, "cvars": {}, "players": []})
+        server.update(details)
+        detected = detected_game(server, details["cvars"])
+        server["game_name"] = detected["name"]
+        server["game_detected_id"] = detected["id"]
+        server["game_known"] = detected["known"]
+        server["game_detected_from_status"] = detected["detected_from_status"]
+        server["hostname"] = clean_q3_text(details["cvars"].get("sv_hostname", ""))
+        server["map"] = details["cvars"].get("mapname", "")
+        server["max_clients"] = int(details["cvars"].get("sv_maxclients", "0") or 0) if details["cvars"].get("sv_maxclients", "0").isdigit() else 0
+        server["player_count"] = len(details["players"])
+        game_type = details["cvars"].get("g_gametype", server["game_type"])
+        urban_terror_modes = {
+            "0": "Free For All", "3": "Team Deathmatch", "4": "Team Survivor",
+            "5": "Follow the Leader", "6": "Capture and Hold", "7": "Capture the Flag",
+            "8": "Bomb Mode", "9": "Jump", "10": "Freeze Tag",
+        }
+        server["game_mode"] = urban_terror_modes.get(game_type, game_type) if detected["id"] == "q3ut4" else game_type
+    return servers
 
 
 def master_up():
@@ -90,7 +191,7 @@ def active_servers():
                 })
     except (OSError, ValueError):
         pass
-    return servers
+    return enrich_servers(servers)
 
 
 def metric_values(servers=None):
@@ -135,10 +236,21 @@ def status_page(values, servers, prefix=""):
     rows = "".join(
         "<tr>"
         f'<td><code>{html.escape(("[" + server["address"] + "]" if server["family"] == "IPv6" else server["address"]) + ":" + str(server["port"]))}</code></td>'
-        f'<td>{html.escape(server["game_name"])}<small><code>{html.escape(server["game"])}</code></small></td><td>{html.escape(server["game_type"])}</td>'
-        f'<td>{html.escape(str(server["protocol"]))}</td><td>{html.escape(server["state"])}</td>'
+        f'<td>{html.escape(server["hostname"] or "Unnamed server")}</td>'
+        f'<td>{html.escape(server["game_name"])}<small><code>{html.escape(server["game"])}</code></small></td>'
+        f'<td>{html.escape(server["map"] or "—")}</td><td>{html.escape(server["game_mode"] or "—")}</td>'
+        f'<td>{server["player_count"]}/{server["max_clients"] or "?"}</td><td>{html.escape(server["state"])}</td>'
         "</tr>" for server in servers
-    ) or '<tr><td colspan="5" class="empty">No active servers</td></tr>'
+    ) or '<tr><td colspan="7" class="empty">No active servers</td></tr>'
+    details_html = "".join(
+        f'<details><summary>{html.escape(server["hostname"] or server["address"])} — '
+        f'{html.escape(server["address"])}:{server["port"]} ({len(server["cvars"])} cvars)</summary>'
+        '<div class="vars"><table><tbody>' + "".join(
+            f'<tr><th><code>{html.escape(key)}</code></th><td><code>{html.escape(value)}</code></td></tr>'
+            for key, value in sorted(server["cvars"].items(), key=lambda item: item[0].casefold())
+        ) + '</tbody></table></div></details>'
+        for server in servers
+    )
     prefix = html.escape(prefix, quote=True)
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -149,9 +261,9 @@ header{{margin-bottom:2.5rem}}h1{{font-size:clamp(2rem,7vw,4.5rem);margin:.25rem
 .status{{display:inline-flex;align-items:center;gap:.6rem;color:{colour}}}.dot{{width:.7rem;height:.7rem;border-radius:50%;background:currentColor;box-shadow:0 0 18px currentColor}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem}}.card{{background:#141b31;border:1px solid #27314f;border-radius:14px;padding:1.4rem}}
 .card strong{{display:block;font-size:2rem}}.card span,footer,.empty,small{{color:#aeb9d8}}small{{display:block;margin-top:.2rem}}h2{{margin-top:3rem}}
-.table{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}a{{color:#8db4ff}}footer{{margin-top:3rem;font-size:.9rem}}
+.table,.vars{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}a{{color:#8db4ff}}details{{margin:.7rem 0;background:#141b31;border:1px solid #27314f;border-radius:10px}}summary{{cursor:pointer;padding:1rem}}.vars{{border:0;border-top:1px solid #27314f;border-radius:0}}.vars td{{white-space:normal;word-break:break-all}}footer{{margin-top:3rem;font-size:.9rem}}
 </style></head><body><header><div class="status"><i class="dot"></i>{status}</div><h1>Master server</h1><p>Public dpmaster service status.</p></header>
-<main><div class="grid">{card_html}</div><h2>Active servers</h2><div class="table"><table><thead><tr><th>Address</th><th>Game</th><th>Type</th><th>Protocol</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div></main>
+<main><div class="grid">{card_html}</div><h2>Active servers</h2><div class="table"><table><thead><tr><th>Address</th><th>Name</th><th>Game</th><th>Map</th><th>Mode</th><th>Players</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div><h2>Server details</h2>{details_html}</main>
 <footer>Updated at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="{prefix}/healthz">Health</a> · JSON: <a href="{prefix}/api/status.json">status</a> / <a href="{prefix}/api/servers.json">servers</a> / <a href="{prefix}/api/games.json">game catalog</a></footer></body></html>"""
 
 
@@ -254,7 +366,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             servers = active_servers()
             self._json({"count": len(servers), "servers": servers}, head)
         elif path == "/api/games.json":
-            observed = sorted({server["game"] for server in active_servers()})
+            observed_servers = active_servers()
+            observed = sorted(
+                {server["game"] for server in observed_servers}
+                | {server["game_detected_id"] for server in observed_servers}
+            )
             catalog = [
                 {**game_details(identifier), "observed": identifier in observed}
                 for identifier in sorted(set(GAME_CATALOG) | set(observed), key=str.casefold)

@@ -38,6 +38,11 @@ one-minute health timer, and HTTP endpoints:
 - `GET /api/servers.json` — JSON export of the active server list.
 - `GET /api/games.json` — known and currently observed game identifiers.
 
+The server list is enriched from each game's public UDP `getstatus` response.
+It includes detected game names, hostname, map, mode, players, and every cvar
+published by the game server. Queries are parallel, strictly timed out, and
+cached so the public page remains lightweight.
+
 The HTTP service uses a bounded worker pool, short socket timeouts and a
 per-client token bucket to shed abusive traffic. See the deployment guide for
 the configurable HTTP port and network-level protection required against
