@@ -5,6 +5,23 @@ dpMasterX is a maintained dpmaster fork that adds atomic persistence for
 validated servers, heartbeat rate limiting, hardened systemd units, a UDP
 health probe, Prometheus metrics, and a public status page on HTTP port 80.
 
+## Features
+
+- Quake III Arena-like master protocol over UDP, including IPv4 and IPv6.
+- DarkPlaces, Quake III Arena, Return to Castle Wolfenstein and Enemy Territory
+  protocol support, plus compatible engines and standalone games.
+- Built-in heartbeat flood protection and per-address server limits.
+- Atomic persistence of validated, unexpired server registrations.
+- Hardened systemd services, readiness probe and recurring health timer.
+- Lightweight public interface with no JavaScript or external dependencies.
+- Live server directory with hostname, detected game, map, mode and occupancy.
+- Accurate total, human and bot counts using each server's UDP `getinfo` data.
+- Complete public cvar export and best-effort named player lists via `getstatus`.
+- A catalog of 51 known game identifiers, augmented automatically by observed
+  identifiers.
+- Prometheus metrics, JSON APIs, reverse-proxy prefix support and HTTP abuse
+  protection.
+
 ## Quick start
 
 ```sh
@@ -39,6 +56,31 @@ one-minute health timer, and HTTP endpoints:
 - `GET /api/games.json` — known and currently observed game identifiers.
 - `GET /games` — browsable game and network-identifier catalog.
 
+### Server JSON model
+
+`GET /api/servers.json` returns one object per active registration. Important
+fields include:
+
+```json
+{
+  "address": "203.0.113.10",
+  "port": 27960,
+  "game": "Quake3Arena",
+  "game_name": "Urban Terror",
+  "hostname": "Example server",
+  "map": "ut4_casa",
+  "game_mode": "Team Deathmatch",
+  "player_count": 32,
+  "human_count": 16,
+  "bot_count": 16,
+  "max_clients": 64,
+  "player_list_complete": false,
+  "players": [],
+  "cvars": {},
+  "query_ok": true
+}
+```
+
 The server list is enriched from each game's public UDP `getstatus` response.
 It includes detected game names, hostname, map, mode, players, and every cvar
 published by the game server. Queries are parallel, strictly timed out, and
@@ -47,6 +89,11 @@ cached so the public page remains lightweight.
 Player totals and bot counts come from `getinfo`. Individual player records
 come from `getstatus`; the JSON marks `player_list_complete: false` when a
 server's size-limited status packet cannot contain every player record.
+
+Do not derive occupancy from `players.length`: Quake 3-family `getstatus`
+packets can be capped near 1400 bytes and omit player records on populated
+servers. `player_count` is the authoritative total, while `players` is a
+best-effort detailed list.
 
 The HTTP service uses a bounded worker pool, short socket timeouts and a
 per-client token bucket to shed abusive traffic. See the deployment guide for
@@ -58,6 +105,47 @@ To change the public HTTP listener, install
 `/etc/default/dpmaster-exporter`, edit `DPMASTER_HTTP_PORT`, then restart
 `dpmaster-exporter.service`. The selected TCP port must also be allowed by the
 host and provider firewalls.
+
+For a reverse proxy mounted below a path, configure the public prefix:
+
+```ini
+DPMASTER_HTTP_PREFIX=/int/dpmX
+```
+
+The exporter then accepts both `/healthz` and `/int/dpmX/healthz`. A complete
+Nginx example is available in [`contrib/systemd`](contrib/systemd/README.md).
+
+## Architecture
+
+```text
+Game servers ──heartbeat/infoResponse──> dpMasterX UDP :27950
+Game clients ───────getservers─────────> dpMasterX UDP :27950
+                                             │
+                                             ├── atomic servers.state
+                                             │
+Public users / monitoring ──HTTP────────> exporter TCP :80
+                                             ├── getinfo: totals and bots
+                                             ├── getstatus: cvars and players
+                                             └── 60-second bounded cache
+```
+
+The C daemon remains focused on the compatible master protocol. The separate,
+unprivileged Python exporter performs HTTP rendering and optional live server
+enrichment. Standard `getserversResponse` packets contain server addresses and
+ports only; consumers needing occupancy must query those game servers with
+`getinfo` or use dpMasterX's JSON API.
+
+## Validation
+
+```sh
+make -C src release
+cd testsuite
+./run_all_tests.sh
+```
+
+The persistence integration test can also be run independently with
+`testsuite/test-persistence.py`. The Perl protocol tests require the `Socket6`
+module.
 
 The Docker image builds the source from this repository and stores persistent
 state in the `/var/lib/dpmaster` volume.
