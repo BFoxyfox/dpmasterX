@@ -36,6 +36,7 @@ one-minute health timer, and HTTP endpoints:
 - `GET /` — public, responsive service-status page.
 - `GET /api/status.json` — JSON service status and aggregate counts.
 - `GET /api/servers.json` — JSON export of the active server list.
+- `GET /api/games.json` — known and currently observed game identifiers.
 
 The HTTP service uses a bounded worker pool, short socket timeouts and a
 per-client token bucket to shed abusive traffic. See the deployment guide for

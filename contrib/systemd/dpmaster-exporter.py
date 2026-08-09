@@ -14,10 +14,40 @@ from urllib.parse import urlsplit
 STATE = os.environ.get("DPMASTER_STATE_FILE", "/var/lib/dpmaster/servers.state")
 LISTEN_ADDRESS = os.environ.get("DPMASTER_HTTP_ADDRESS", "0.0.0.0")
 LISTEN_PORT = int(os.environ.get("DPMASTER_HTTP_PORT", "80"))
+PUBLIC_PREFIX = os.environ.get("DPMASTER_HTTP_PREFIX", "").strip().rstrip("/")
 MAX_WORKERS = int(os.environ.get("DPMASTER_HTTP_MAX_WORKERS", "32"))
 RATE = float(os.environ.get("DPMASTER_HTTP_RATE", "5"))
 BURST = float(os.environ.get("DPMASTER_HTTP_BURST", "20"))
 STARTED = time.time()
+
+# dpmaster accepts arbitrary game identifiers. This catalog covers identifiers
+# built into dpmaster plus well-known games in the compatible engine ecosystem.
+GAME_CATALOG = {
+    "Quake3Arena": "Quake III Arena",
+    "wolfmp": "Return to Castle Wolfenstein",
+    "et": "Wolfenstein: Enemy Territory",
+    "Nexuiz": "Nexuiz Classic",
+    "Xonotic": "Xonotic",
+    "Transfusion": "Transfusion",
+    "Warsow": "Warsow",
+    "Warfork": "Warfork",
+    "Tremulous": "Tremulous",
+    "Unvanquished": "Unvanquished",
+    "OpenArena": "OpenArena",
+    "q3ut4": "Urban Terror",
+    "SmokinGuns": "Smokin' Guns",
+    "WorldOfPadman": "World of Padman",
+    "Reaction": "Reaction",
+    "Daemon": "Unvanquished (Daemon engine)",
+}
+
+
+def game_details(identifier):
+    return {
+        "id": identifier,
+        "name": GAME_CATALOG.get(identifier, identifier),
+        "known": identifier in GAME_CATALOG,
+    }
 
 
 def master_up():
@@ -45,6 +75,7 @@ def active_servers():
                     continue
                 expiry, family, address, port, protocol, state, game, game_type = fields
                 state_name = {"2": "empty", "3": "occupied", "4": "full"}.get(state, "unknown")
+                decoded_game = game_details(game)
                 servers.append({
                     "address": address,
                     "port": int(port),
@@ -52,6 +83,8 @@ def active_servers():
                     "protocol": int(protocol),
                     "state": state_name,
                     "game": game,
+                    "game_name": decoded_game["name"],
+                    "game_known": decoded_game["known"],
                     "game_type": game_type,
                     "expires_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(expiry))),
                 })
@@ -102,7 +135,7 @@ def status_page(values, servers, prefix=""):
     rows = "".join(
         "<tr>"
         f'<td><code>{html.escape(("[" + server["address"] + "]" if server["family"] == "IPv6" else server["address"]) + ":" + str(server["port"]))}</code></td>'
-        f'<td>{html.escape(server["game"])}</td><td>{html.escape(server["game_type"])}</td>'
+        f'<td>{html.escape(server["game_name"])}<small><code>{html.escape(server["game"])}</code></small></td><td>{html.escape(server["game_type"])}</td>'
         f'<td>{html.escape(str(server["protocol"]))}</td><td>{html.escape(server["state"])}</td>'
         "</tr>" for server in servers
     ) or '<tr><td colspan="5" class="empty">No active servers</td></tr>'
@@ -115,11 +148,11 @@ body{{max-width:1050px;margin:0 auto;padding:clamp(2rem,8vw,6rem) 1.2rem}}
 header{{margin-bottom:2.5rem}}h1{{font-size:clamp(2rem,7vw,4.5rem);margin:.25rem 0}}
 .status{{display:inline-flex;align-items:center;gap:.6rem;color:{colour}}}.dot{{width:.7rem;height:.7rem;border-radius:50%;background:currentColor;box-shadow:0 0 18px currentColor}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem}}.card{{background:#141b31;border:1px solid #27314f;border-radius:14px;padding:1.4rem}}
-.card strong{{display:block;font-size:2rem}}.card span,footer,.empty{{color:#aeb9d8}}h2{{margin-top:3rem}}
+.card strong{{display:block;font-size:2rem}}.card span,footer,.empty,small{{color:#aeb9d8}}small{{display:block;margin-top:.2rem}}h2{{margin-top:3rem}}
 .table{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}a{{color:#8db4ff}}footer{{margin-top:3rem;font-size:.9rem}}
 </style></head><body><header><div class="status"><i class="dot"></i>{status}</div><h1>Master server</h1><p>Public dpmaster service status.</p></header>
 <main><div class="grid">{card_html}</div><h2>Active servers</h2><div class="table"><table><thead><tr><th>Address</th><th>Game</th><th>Type</th><th>Protocol</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div></main>
-<footer>Updated at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="{prefix}/healthz">Health</a> · JSON: <a href="{prefix}/api/status.json">status</a> / <a href="{prefix}/api/servers.json">servers</a></footer></body></html>"""
+<footer>Updated at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="{prefix}/healthz">Health</a> · JSON: <a href="{prefix}/api/status.json">status</a> / <a href="{prefix}/api/servers.json">servers</a> / <a href="{prefix}/api/games.json">game catalog</a></footer></body></html>"""
 
 
 class RateLimiter:
@@ -169,13 +202,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _public_prefix(self):
         """Return a safe path prefix explicitly supplied by a trusted proxy."""
-        prefix = self.headers.get("X-Forwarded-Prefix", "").strip().rstrip("/")
+        prefix = self.headers.get("X-Forwarded-Prefix", PUBLIC_PREFIX).strip().rstrip("/")
         parsed = urlsplit(prefix)
         if not prefix or not prefix.startswith("/") or prefix.startswith("//"):
             return ""
         if parsed.scheme or parsed.netloc or parsed.query or parsed.fragment or parsed.path != prefix:
             return ""
         return prefix
+
+    def _route_path(self):
+        path = urlsplit(self.path).path
+        prefix = self._public_prefix()
+        if prefix and (path == prefix or path.startswith(prefix + "/")):
+            path = path[len(prefix):] or "/"
+        return path
 
     def _json(self, value, head=False):
         body = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
@@ -186,7 +226,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.close_connection = True
             self._reply(429, b"too many requests\n", head=head)
             return
-        path = urlsplit(self.path).path
+        path = self._route_path()
         if path == "/healthz":
             healthy = master_up()
             self._reply(200 if healthy else 503, b"ok\n" if healthy else b"unavailable\n", head=head)
@@ -213,6 +253,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         elif path == "/api/servers.json":
             servers = active_servers()
             self._json({"count": len(servers), "servers": servers}, head)
+        elif path == "/api/games.json":
+            observed = sorted({server["game"] for server in active_servers()})
+            catalog = [
+                {**game_details(identifier), "observed": identifier in observed}
+                for identifier in sorted(set(GAME_CATALOG) | set(observed), key=str.casefold)
+            ]
+            self._json({
+                "note": "dpmaster accepts arbitrary game identifiers; this catalog cannot be universally exhaustive.",
+                "count": len(catalog),
+                "games": catalog,
+            }, head)
         elif path == "/":
             servers = active_servers()
             self._reply(200, status_page(metric_values(servers), servers, self._public_prefix()).encode(), "text/html; charset=utf-8", head)
