@@ -254,7 +254,7 @@ def status_page(values, servers, prefix=""):
     prefix = html.escape(prefix, quote=True)
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>dpmaster — Service status</title><style>
+<title>dpMasterX — Service status</title><style>
 :root{{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b1020;color:#eef2ff}}
 body{{max-width:1050px;margin:0 auto;padding:clamp(2rem,8vw,6rem) 1.2rem}}
 header{{margin-bottom:2.5rem}}h1{{font-size:clamp(2rem,7vw,4.5rem);margin:.25rem 0}}
@@ -262,7 +262,7 @@ header{{margin-bottom:2.5rem}}h1{{font-size:clamp(2rem,7vw,4.5rem);margin:.25rem
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1rem}}.card{{background:#141b31;border:1px solid #27314f;border-radius:14px;padding:1.4rem}}
 .card strong{{display:block;font-size:2rem}}.card span,footer,.empty,small{{color:#aeb9d8}}small{{display:block;margin-top:.2rem}}h2{{margin-top:3rem}}
 .table,.vars{{overflow:auto;border:1px solid #27314f;border-radius:14px}}table{{width:100%;border-collapse:collapse;background:#141b31}}th,td{{padding:.8rem 1rem;text-align:left;border-bottom:1px solid #27314f;white-space:nowrap}}th{{color:#aeb9d8}}a{{color:#8db4ff}}details{{margin:.7rem 0;background:#141b31;border:1px solid #27314f;border-radius:10px}}summary{{cursor:pointer;padding:1rem}}.vars{{border:0;border-top:1px solid #27314f;border-radius:0}}.vars td{{white-space:normal;word-break:break-all}}footer{{margin-top:3rem;font-size:.9rem}}
-</style></head><body><header><div class="status"><i class="dot"></i>{status}</div><h1>Master server</h1><p>Public dpmaster service status.</p></header>
+</style></head><body><header><div class="status"><i class="dot"></i>{status}</div><h1>dpMasterX</h1><p>Public master server status and live game directory.</p></header>
 <main><div class="grid">{card_html}</div><h2>Active servers</h2><div class="table"><table><thead><tr><th>Address</th><th>Name</th><th>Game</th><th>Map</th><th>Mode</th><th>Players</th><th>Status</th></tr></thead><tbody>{rows}</tbody></table></div><h2>Server details</h2>{details_html}</main>
 <footer>Updated at {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())} · <a href="{prefix}/healthz">Health</a> · JSON: <a href="{prefix}/api/status.json">status</a> / <a href="{prefix}/api/servers.json">servers</a> / <a href="{prefix}/api/games.json">game catalog</a></footer></body></html>"""
 
@@ -292,7 +292,7 @@ LIMITER = RateLimiter(RATE, BURST)
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
-    server_version = "dpmaster"
+    server_version = "dpMasterX"
     sys_version = ""
 
     def setup(self):
@@ -376,7 +376,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 for identifier in sorted(set(GAME_CATALOG) | set(observed), key=str.casefold)
             ]
             self._json({
-                "note": "dpmaster accepts arbitrary game identifiers; this catalog cannot be universally exhaustive.",
+                "note": "dpMasterX accepts arbitrary game identifiers; this catalog cannot be universally exhaustive.",
                 "count": len(catalog),
                 "games": catalog,
             }, head)

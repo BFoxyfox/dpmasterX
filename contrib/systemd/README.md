@@ -1,6 +1,6 @@
 # systemd production deployment
 
-These files provide a hardened Linux deployment for dpmaster, an HTTP health
+These files provide a hardened Linux deployment for dpMasterX, an HTTP health
 and Prometheus exporter, and a recurring UDP probe.
 
 ## Paths and prerequisites

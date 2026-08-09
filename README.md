@@ -1,9 +1,9 @@
 
-# Dpmaster, an open master server
+# dpMasterX — an open master server
 
-This maintained fork adds atomic persistence for validated servers, heartbeat
-rate limiting, hardened systemd units, a UDP health probe, and Prometheus
-metrics and a public status page on HTTP port 80.
+dpMasterX is a maintained dpmaster fork that adds atomic persistence for
+validated servers, heartbeat rate limiting, hardened systemd units, a UDP
+health probe, Prometheus metrics, and a public status page on HTTP port 80.
 
 ## Quick start
 

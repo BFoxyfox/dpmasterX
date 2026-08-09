@@ -1,5 +1,5 @@
 [Unit]
-Description=dpmaster HTTP health and Prometheus metrics
+Description=dpMasterX public status and metrics service
 After=dpmaster.service
 Requires=dpmaster.service
 
